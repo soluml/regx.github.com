@@ -3,13 +3,13 @@
 * RegX.js is a HTML5 input validation polyfill that helps you validate all W3C input types.
 * Kudos to Jonas Raoni Soares Silva for writing Big Number, making it easy to do to precision math with floats for the number/range inputs.
 *
-* Copyright 2012 Benjamin Solum (@soluml)
+* Copyright 2013 Benjamin Solum (@soluml)
 * Released under the Creative Commons Attribution-ShareAlike (CC BY-SA) License.
 *
 * author:  Benjamin Solum
-* version: 0.3
-* url:     http://www.soluml.com/RegX
-* source:  https://github.com/soluml/RegX
+* version: 0.4
+* url:     http://www.soluml.com/RegX/
+* source:  https://regx.github.com/
 * @module RegX
 * @main RegX
 */
@@ -106,7 +106,9 @@ USE_SERVER_VALIDATION = (RegX.USE_SERVER_VALIDATION === true ? true : false),
 			}
 		]
 */
-ERRORS = [];
+ERRORS = [],
+//Boolean value for btns with the formnovalidate attribute.
+isFormnovalidate = false;
 
 /**
 * Boolean check if there are errors in the last submitted form.
@@ -148,6 +150,42 @@ RegX.onSuccess = function(){};
 * @event onFailure
 */
 RegX.onFailure = function(){};
+
+/**
+* This function loops through each form and binds methods to the submit event. It also loops through the submit buttons and binds click events to those.
+* This function is called at window.onload by default.
+* __If you add additional forms through JavaScript or AJAX, this method must be called again to ensure validation of that form.__
+*
+@example
+    RegX.init();
+*
+* @method init
+*/
+RegX.init = function(){
+	var $forms = document.forms,
+		$in = document.getElementsByTagName('input'),
+		$btn = document.getElementsByTagName('button'),
+		i;
+	for(i = $forms.length; i > 0; i--){
+		removeEvent($forms[i-1], 'submit', onSubmitRegX);
+		addEvent($forms[i-1], 'submit', onSubmitRegX);
+	}
+	//Bind <input type="submit" formnovalidate> to prevent validation on submit
+	for(i = $in.length; i > 0; i--){
+		if(attr($in[i-1], 'type') === 'submit' && typeof attr($in[i-1], 'formnovalidate') == 'string'){
+			removeEvent($in[i-1], 'click', onClickRegX);
+			addEvent($in[i-1], 'click', onClickRegX);
+		}
+	}
+	//Bind <button type="submit" formnovalidate> to prevent validation on submit
+	for(i = $btn.length; i > 0; i--){
+		//Bind <button type="submit">
+		if(attr($btn[i-1], 'type') === 'submit' && typeof attr($btn[i-1], 'formnovalidate') == 'string'){
+			removeEvent($btn[i-1], 'click', onClickRegX);
+			addEvent($btn[i-1], 'click', onClickRegX);
+		}	
+	}
+};
 
 /**
 * __This function returns TRUE if the field is valid and FALSE if not.__ This mirrors native browser implementation.
@@ -316,6 +354,14 @@ RegX.checkValidity = function($elem, returnError) {
 				}
 				return true;
 				break;
+			case 'month':
+				if(!readonly && (required || val.length > 0)){
+					try{ checkMonth($elem); }
+					catch(e){ return formatError(e); }
+				}
+				return true;
+				break;
+				
 			/*
 			case 'datetime':
 				if(!readonly && (required || val.length > 0)){ return !this.validateDateTime($elem); }
@@ -323,10 +369,6 @@ RegX.checkValidity = function($elem, returnError) {
 				break;
 			case 'date':
 				if(!readonly && (required || val.length > 0)){ return !this.validateDate($elem); }
-				return true;
-				break;
-			case 'month':
-				if(!readonly && (required || val.length > 0)){ return !this.validateMonth($elem); }
 				return true;
 				break;
 			case 'time':
@@ -361,7 +403,7 @@ RegX.checkValidity = function($elem, returnError) {
 		}
 		//Format the error for returning.
 		function formatError(e){
-			if(returnError){ return {"name": name, "type": tag, "value": val, "msg": getMessage($elem), "error_msg": e}; }
+			if(returnError){ return {"name": name, "type": tag, "value": val, "msg": getMessage($elem), "error":e.type, "error_msg": e.msg}; }
 			return false;
 		}
 	}
@@ -370,21 +412,14 @@ RegX.checkValidity = function($elem, returnError) {
 /**
 * This function checks if the field is valid, assuming that the field IS required and only observing that fact.
 *
-@example
-    RegX.checkValidity(document.getElementById('ELEMENT_ID'));
-		
-@example
-    RegX.checkValidity(jQuery('input:eq(0)'));
-*
 * @method checkRequired
-* @param $input {jQuery or DOM Element} The input you want to check the validity of. If jQuery selector grabs more than one element, only the first element is used.
-* @return {Boolean} Returns true if element is valid and false if not.
+* @private
 */
 function checkRequired($input) {
 	if($input.selector !== undefined) $input = $input[0];
 	switch(attr($input,'type')) {
 		case 'checkbox':
-			if(!$input.checked){ throw 'Checkbox was left unchecked.'; }
+			if(!$input.checked){ throw {type: 'valueMissing', msg: 'Checkbox was left unchecked.'}; }
 			break;
 		case 'radio':
 			var radioName = $input.getAttribute('name'),
@@ -403,64 +438,48 @@ function checkRequired($input) {
 					return;
 				}
 			}
-			throw 'A radio option was not checked.';
+			throw {type: 'valueMissing', msg: 'A radio option was not checked.'};
 			break;
 		default:
-			if(trim($input.value, true).length === 0){ throw 'There was no value for this field.'; }
+			if(trim($input.value, true).length === 0){ throw {type: 'valueMissing', msg: 'There was no value for this field.'}; }
 			break;
 	}
-};
+}
 
 /**
 * This function checks if the field is valid based on it's pattern attribute. __If no pattern attribute is supplied, this method returns false!__
 * If specified, the attribute's value must match the JavaScript Pattern production ([ECMA262]). The pattern is compiled with the "global, ignoreCase, and multiline flags disabled".
 *
-@example
-    RegX.checkPattern(document.getElementById('ELEMENT_ID'));
-		
-@example
-    RegX.checkPattern(jQuery('input:eq(0)'));
-*
 * @method checkPattern
-* @param $input {jQuery or DOM Element} The input you want to check the validity of. If jQuery selector grabs more than one element, only the first element is used.
-* @return {Boolean} Returns true if element is valid and false if not.
+* @private
 */
 function checkPattern($input) {
 	if($input.selector !== undefined) $input = $input[0];
 	var pattern = new RegExp('^(?:'+attr($input,'pattern')+')$');
-	if(!pattern.test($input.value)){ throw 'The value does not match the pattern: "'+ pattern +'".'; }
+	if(!pattern.test($input.value)){ throw {type: 'patternMismatch', msg: 'The value does not match the pattern: "'+ pattern +'".'}; }
 	return;
-};
+}
 
 /**
 * This function checks if the field's value exceeds the max length based on it's maxlength attribute. __If no maxlength attribute is supplied, this method returns false!__
 * If maxlength is specified as a float, the maxlength value is floored. Maxlength value must be a number >= 0 or else this property is effectively ignored.
 *
-@example
-    RegX.checkMaxLength(document.getElementById('ELEMENT_ID'));
-		
-@example
-    RegX.checkMaxLength(jQuery('input:eq(0)'));
-*
 * @method checkMaxLength
-* @param $input {jQuery or DOM Element} The input you want to check the validity of. If jQuery selector grabs more than one element, only the first element is used.
-* @return {Boolean} Returns true if element is valid and false if not.
+* @private
 */
 function checkMaxLength($input) {
 	if($input.selector !== undefined){ $input = $input[0]; }
-	//if($input.value.length <= parseInt(attr($input,'maxLength'),10){
-		//return true;
-	//} else {
-		//throw 'The value exceeds the maxlength attribute.';
-	//}
-
-
 	if($input.value.length > parseInt(attr($input,'maxLength'),10)){
-		throw 'The value exceeds the maxlength attribute.';
+		throw {type: 'tooLong', msg: 'The value exceeds the maxlength attribute.'};
 	}
-
 }
-//Utility function for checking selects in more detail for various browsers.
+
+/**
+* This function checks selects in more detail for various browsers.
+*
+* @method checkSelect
+* @private
+*/
 function checkSelect($select) {
 	if($select.selector !== undefined) $select = $select[0];
 	
@@ -469,7 +488,7 @@ function checkSelect($select) {
 	// If the element has its required attribute specified, and either none of the option elements in the select element's list of options have their selectedness set to true, or the only option element in the select element's list of options with its selectedness set to true is the placeholder label option, then the element is suffering from being missing.
 	
 	//On submission the select input MUST have a value selected.
-	if($select.selectedIndex < 0){ throw 'An option was not selected.'; }
+	if($select.selectedIndex < 0){ throw {type: 'valueMissing', msg: 'An option was not selected.'}; }
 	
 	//If selected element value is placeholder label option...
 	if($select.value === ''){
@@ -480,27 +499,21 @@ function checkSelect($select) {
 		placeholderOptionVal = attr($select.options[0], 'value');
 		//Check if var is "specified" in IE
 		if($select.options[0].attributes.value && !$select.options[0].attributes.value.specified){
-			if(trim($select.options[0].innerHTML) === ''){ throw 'No value was specified.'; }
+			if(trim($select.options[0].innerHTML) === ''){ throw {type: 'valueMissing', msg: 'No value was specified.'}; }
 		} else {
-			if(placeholderOptionVal === '' || (placeholderOptionVal === null && trim($select.options[0].innerHTML) === '')){ throw 'No value was specified.'; }
+			if(placeholderOptionVal === '' || (placeholderOptionVal === null && trim($select.options[0].innerHTML) === '')){ throw {type: 'valueMissing', msg: 'No value was specified.'}; }
 		}	
 	}
 }
+
 /**
 * This function checks if the field's value is a valid color.
 * __The input color control shouldn't allow you to set the color to anything BUT a color.__
 * In a modern browser, checkValidity() should ALWAYS return true, because the default value for anything other than a valid hex color, is #000000.
 * When the setting RegX.USE_BETTER_VALIDATION is set to true, RegX allows the use of SVG color keywords or simple colors (ex. aliceblue or #f00).
 *
-@example
-    RegX.checkColor(document.getElementById('ELEMENT_ID'));
-		
-@example
-    RegX.checkColor(jQuery('input:eq(0)'));
-*
 * @method checkColor
-* @param $input {jQuery or DOM Element} The input you want to check the validity of. If jQuery selector grabs more than one element, only the first element is used.
-* @return {Boolean} Returns true if element is valid and false if not.
+* @private
 */
 function checkColor($input) {
 	if($input.selector !== undefined) $input = $input[0];
@@ -512,15 +525,15 @@ function checkColor($input) {
 		return;
 	} else {
 		if(!USE_BETTER_VALIDATION || val.length === 0){
-			throw 'This is not a valid hex color. e.g. "#FF0000"';
+			throw {type: 'typeMismatch', msg: 'This is not a valid hex color. e.g. "#FF0000"'};
 		} else if(val.length === 0){
-			throw 'This field is empty.';
+			throw {type: 'valueMissing', msg: 'This field is empty.'};
 		}
 		
 		//Do Legacy Color Value Parser
 		val = trim(val);
 		if(val.toLowerCase() === 'transparent'){
-			throw 'This is not a valid hex color. e.g. "#FF0000"';
+			throw {type: 'typeMismatch', msg: 'This is not a valid hex color. e.g. "#FF0000"'};
 		}
 		
 		//Check SVG color keywords
@@ -530,25 +543,18 @@ function checkColor($input) {
 		if(val.length === 4 && /^#[a-f0-9]{3}$/i.test(val)){
 			return;
 		}
-		
-		throw 'This is not a valid hex color. e.g. "#F00"';
+
+		throw {type: 'typeMismatch', msg: 'This is not a valid hex color. e.g. "#F00"'};
 	}
-};
+}
 
 /**
 * This function checks if the field's value is a valid email address.
 * Spec: http://www.w3.org/TR/html5/states-of-the-type-attribute.html#e-mail-state-type-email
 * This method can use "Better Validation" based on  Arluison Guillaume's regex.
 *
-@example
-    RegX.checkEmail(document.getElementById('ELEMENT_ID'));
-		
-@example
-    RegX.checkEmail(jQuery('input:eq(0)'));
-*
 * @method checkEmail
-* @param $input {jQuery or DOM Element} The input you want to check the validity of. If jQuery selector grabs more than one element, only the first element is used.
-* @return {Boolean} Returns true if element is valid and false if not.
+* @private
 */
 function checkEmail($input) {
 	if($input.selector !== undefined) $input = $input[0];
@@ -561,10 +567,10 @@ function checkEmail($input) {
 	} //'
 	
 	if(!regex.test(email)){
-		throw 'This is not a valid email address.';	
+		throw {type: 'typeMismatch', msg: 'This is not a valid email address.'};
 	}
 	return;
-};
+}
 
 /**
 * This function checks if the field's value is a valid URL.
@@ -573,15 +579,8 @@ function checkEmail($input) {
 *	Scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
 * This method can use "Better Validation" to do deeper checking for ftp and http/https (as Chrome does).
 *
-@example
-    RegX.checkURL(document.getElementById('ELEMENT_ID'));
-		
-@example
-    RegX.checkURL(jQuery('input:eq(0)'));
-*
 * @method checkURL
-* @param $input {jQuery or DOM Element} The input you want to check the validity of. If jQuery selector grabs more than one element, only the first element is used.
-* @return {Boolean} Returns true if element is valid and false if not.
+* @private
 */
 function checkURL($input) {
 	if($input.selector !== undefined) $input = $input[0];
@@ -589,7 +588,7 @@ function checkURL($input) {
 	//Scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
 	var url = trim($input.value);
 	if(!/^[a-z][a-z\d+\-.]*:/i.test(url)) { //Global Scheme Check for Firefox, Safari, Opera and Chrome
-		 throw 'This is not a valid URL.';
+		 throw {type: 'typeMismatch', msg: 'This is not a valid URL.'};
 	}
 	//Path can be empty.
 	//On Chrome, path cannot be empty for ftp, http, or https.
@@ -597,25 +596,18 @@ function checkURL($input) {
 		//Google Does not like these chars in url: @~=;[]%^
 		//Google Does not like these additional chars after authority path-abempty: :#\/
 		if(!/^(ftp|https?):(\/\/[^\/:#\\@~=;\[\]%\^][^@~=;\[\]%\^]*|\/[^\/:#\\@~=;\[\]%\^][^@~=;\[\]%\^]*|[^\/:#\\@~=;\[\]%\^][^\/@~=;\[\]%\^]*[^@~=;\[\]%\^]*)$/i.test(url)) {
-			throw 'This is not a valid URL.';
+			throw {type: 'typeMismatch', msg: 'This is not a valid web address.'};
 		}
 	}
 	return;
-};
+}
 
 /**
 * This function checks if the field's value is a valid number.
 * Specify the min, max, and step to control which numbers are available.
 *
-@example
-    RegX.checkNumber(document.getElementById('ELEMENT_ID'));
-		
-@example
-    RegX.checkNumber(jQuery('input:eq(0)'));
-*
 * @method checkNumber
-* @param $input {jQuery or DOM Element} The input you want to check the validity of. If jQuery selector grabs more than one element, only the first element is used.
-* @return {Boolean} Returns true if element is valid and false if not.
+* @private
 */
 function checkNumber($input) {
 	if($input.selector !== undefined) $input = $input[0];
@@ -626,12 +618,12 @@ function checkNumber($input) {
 	    num         = parseFloat($input.value),
 	    specialStep = false, //Special Step means that the value has to be the absolute value of the min plus or minus n where n is an integer.
 	    validStep   = false, // Logic sets this to true if it finds that the value is an even step.
-			tempMin,
+		tempMin,
 	    tempNum,
-			regexp = /^\d+$/;
+		regexp = /^\d+$/;
 	
 	if(isNaN(num)) { //Value MUST be a valid floating point number. If not, return with error.
-		throw 'This is not a valid number.';
+		throw {type: 'typeMismatch', msg: 'This is not a valid number.'};
 	}
 	
 	if(isNaN(step)) { //If step isn't set or is NaN, set temporarily to 0 and determine if it should be based on min value or set to default 1 value.
@@ -690,33 +682,26 @@ function checkNumber($input) {
 		}
 	}
 	
-	if(!validStep){ throw 'This number is not a valid step.'; }
-	if(!isNaN(max) && num > max){ throw 'This number is bigger than the maximum.'; }
-	if(!isNaN(min) && num < min){ throw 'This number is smaller than the minimum.'; }
+	if(!validStep){ throw {type: 'stepMismatch', msg: 'This number is not a valid step ('+step+').'}; }
+	if(!isNaN(max) && num > max){ throw {type: 'rangeOverflow', msg: 'This number is larger than the maximum ('+max+').'}; }
+	if(!isNaN(min) && num < min){ throw {type: 'rangeUnderflow', msg: 'This number is smaller than the minimum ('+min+').'}; }
 	return;
-};
+}
 
 /**
 * This function checks if the field's value is a valid number within a range.
 * The range input seems to be a different GUI on top of the number input type. If you look at the spec for input range, no matter what value you set, the browser should auto correct it for you.
 * __Since the spec assumes always valid (unless somehow, you pass in a "NaN"), RegX assumes always valid (unless somehow, you pass in a "NaN").__ The control will literally not allow you to move outside the range.
-* However, when USE_BETTER_VALIDATION is true, we treat range like a number and assume that it should be validated the same way.	
-*
-@example
-    RegX.checkRange(document.getElementById('ELEMENT_ID'));
-		
-@example
-    RegX.checkRange(jQuery('input:eq(0)'));
+* However, when USE_BETTER_VALIDATION is true, we treat range like a number and assume that it should be validated the same way.
 *
 * @method checkRange
-* @param $input {jQuery or DOM Element} The input you want to check the validity of. If jQuery selector grabs more than one element, only the first element is used.
-* @return {Boolean} Returns true if element is valid and false if not.
+* @private
 */
 function checkRange($input) {
 	if($input.selector !== undefined){ $input = $input[0]; }
 	
 	var num = parseFloat($input.value);
-	if(isNaN(num)){ throw 'This is not a valid number.'; }
+	if(isNaN(num)){ throw {type: 'typeMismatch', msg: 'This is not a valid number.'}; }
 	
 	if(USE_BETTER_VALIDATION){
 		try{ checkNumber($input); }
@@ -724,22 +709,16 @@ function checkRange($input) {
 	}
 	
 	return;
-};
+}
 
 /**
-* This function checks if the field's value is a valid week optionally within a range.
+* This function checks if the field's value is a valid week, optionally within a range.
 * The week string must contain 4 digits for the year, followed by a dash, followed by a capital W, followed by two week digits, ranging from 01 to 53.
 * __The week input supports both a min and a max week. These strings must be valid week strings.__
-*
-@example
-    RegX.checkWeek(document.getElementById('ELEMENT_ID'));
-		
-@example
-    RegX.checkWeek(jQuery('input:eq(0)'));
+* The week input also supports a step attribute, which is an integer describing how many weeks one should step.
 *
 * @method checkWeek
-* @param $input {jQuery or DOM Element} The input you want to check the validity of. If jQuery selector grabs more than one element, only the first element is used.
-* @return {Boolean} Returns true if element is valid and false if not.
+* @private
 */
 function checkWeek($input){ //YYYY-"W"WW
 	if($input.selector !== undefined) $input = $input[0];
@@ -758,7 +737,7 @@ function checkWeek($input){ //YYYY-"W"WW
 		if(step) step = trim(step);
 	}
 
-	if(!regex.test(val)){ throw 'This is not a valid week string. e.g. "YYYY-\'W\'WW"'; }
+	if(!regex.test(val)){ throw {type: 'typeMismatch', msg: 'This is not a valid week string. e.g. "YYYY-\'W\'WW"'}; }
 
 	val = gregorianWeek(val.match(regex)); //Match passes an array with three args
 
@@ -766,13 +745,17 @@ function checkWeek($input){ //YYYY-"W"WW
 
 		if(regex.test(max)) {
 			max = gregorianWeek(max.match(regex));
-			if((max && max.length === 2) && max[0] < val[0] || (max[0] === val[0] && max[1] < val[1])){ throw 'This week date is past the maximum week date.'; }
+			if((max && max.length === 2) && max[0] < val[0] || (max[0] === val[0] && max[1] < val[1])){
+				throw {type: 'rangeOverflow', msg: 'This week date is past the maximum week date ('+pad(4, max[0])+'-'+pad(2, max[1])+').'};
+			}
 			basestep = max;
 		}
 
 		if(regex.test(min)) {
 			min = gregorianWeek(min.match(regex));
-			if((min && min.length === 2) && min[0] > val[0] || (min[0] === val[0] && min[1] > val[1])){ throw 'This week date is sooner than the minimum week date.'; }
+			if((min && min.length === 2) && min[0] > val[0] || (min[0] === val[0] && min[1] > val[1])){
+				throw {type: 'rangeUnderflow', msg: 'This week date is sooner than the minimum week date ('+pad(4, min[0])+'-'+pad(2, min[1])+').'};
+			}
 			basestep = min;
 		}
 
@@ -782,14 +765,15 @@ function checkWeek($input){ //YYYY-"W"WW
 			//Basestep is 1970-W01 unless the following.
 			//If max is present, it is the basestep unless min is present.
 			//If min is present, it is the basestep.
-
-			if(spanWeeks(basestep, val) % step !== 0){ throw 'This week date is not a valid step of the base week date.'; }
+			if(spanWeeks(basestep, val) % step !== 0){
+				throw {type: 'stepMismatch', msg: 'This week date is not a valid step ('+step+') of the base week date ('+pad(4, basestep[0])+'-'+pad(2, basestep[1])+').'};
+			}
 		}
 
 		return;
 	}
 
-	throw 'This is not a valid week string. e.g. "YYYY-\'W\'WW"';
+	throw {type: 'typeMismatch', msg: 'This is not a valid week string. e.g. "YYYY-\'W\'WW"'};
 
 	function spanWeeks(base, val){
 		//Determine amount of weeks in between span of years
@@ -827,10 +811,87 @@ function checkWeek($input){ //YYYY-"W"WW
 		}
 		return true;
 	}
-};
+}
 
+/**
+* This function checks if the field's value is a valid month, optionally within a range.
+* The month string must contain 4 digits for the year, followed by a dash, followed by two month digits, ranging from 01 to 12.
+* __The month input supports both a min and a max month. These strings must be valid month strings.__
+* The month input also supports a step attribute, which is an integer describing how many months one should step.
+*
+* @method checkMonth
+* @private
+*/
+function checkMonth($input){ //YYYY-MM
+	if($input.selector !== undefined) $input = $input[0];
 
+	var val       = $input.value,
+	    max       = attr($input, 'max'),
+	    min       = attr($input, 'min'),
+		step      = attr($input, 'step'),
+		basestep  = [1970,1], //Default step base is 1970-01
+	    regex     = /^(\d{4})\-(\d{2})$/;
+			
+	if(USE_SANITATION) {
+		val = trim(val);
+		if(max) max = trim(max);
+		if(min) min = trim(min);
+		if(step) step = trim(step);
+	}
 
+	if(!regex.test(val)){ throw {type: 'typeMismatch', msg: 'This is not a valid month string. e.g. "YYYY-MM"'}; }
+
+	val = gregorianMonth(val.match(regex)); //Match passes an array with three args
+
+	if(val && val.length === 2) {
+		//Check Max Month
+		if(regex.test(max)) {
+			max = gregorianMonth(max.match(regex));
+			if((max && max.length === 2) && max[0] < val[0] || (max[0] === val[0] && max[1] < val[1])){
+				throw {type: 'rangeOverflow', msg: 'This month is past the maximum month ('+pad(4, max[0])+'-'+pad(2, max[1])+').'};
+			}
+			basestep = max;
+		}
+		//Check Min Month
+		if(regex.test(min)) {
+			min = gregorianMonth(min.match(regex));
+			if((min && min.length === 2) && min[0] > val[0] || (min[0] === val[0] && min[1] > val[1])){
+				throw {type: 'rangeUnderflow', msg: 'This month is sooner than the minimum month ('+pad(4, min[0])+'-'+pad(2, min[1])+').'};
+			}
+			basestep = min;
+		}
+		//Check Step
+		if(/^\d+$/.test(step)){
+			step = parseInt(step, 10);
+
+			//Basestep is 1970-01 unless the following.
+			//If max is present, it is the basestep unless min is present.
+			//If min is present, it is the basestep.
+			if(spanMonths(basestep, val) % step !== 0){
+				throw {type: 'stepMismatch', msg: 'This month is not a valid step ('+step+') of the base month ('+pad(4, basestep[0])+'-'+pad(2, basestep[1])+').'};
+			}
+		}
+
+		return;
+	}
+
+	throw {type: 'typeMismatch', msg: 'This is not a valid month string. e.g. "YYYY-MM"'};
+	
+	function spanMonths(base, val){
+		return ((val[0]-base[0]) * 12) - base[1] + val[1];
+	}
+	
+	function gregorianMonth(val) {
+		var year = parseInt(val[1],10),
+			month = parseInt(val[2],10);
+	
+		if(1 > year || 1 > month || month > 12){
+			return false;
+		}
+	
+		return [year, month];
+	}
+}
 
 
 
@@ -878,12 +939,18 @@ function getMessage($elem) {
 		return msg;
 	}
 	
-	msg = attr($elem, 'title');
+	msg = $elem.validationMessage;
 	if(typeof msg === "string") {
 		return msg;
 	}
 	
 	return '';
+}
+//Add zeros for strings
+function pad(n, str){
+	if(typeof str !== 'string'){ str = str + ''; }
+	while(str.length < n){ str = '0' + str; }
+	return str;
 }
 //Utility function for date fields to determine leap year.
 function isLeapYear(y){
@@ -892,43 +959,66 @@ function isLeapYear(y){
 //Submit Handler
 function onSubmitRegX(e){
 	var $frm = e.target,
-			i;
-
-	//For IE8
-	if(typeof $frm === 'undefined') $frm = e.srcElement;
-
-	//Reset Boolean Error Tracker
-	RegX.isError = false;
+		novalidate = false,
+		i;
 	
-	//Pass form to checkValidity to check all fields.
-	ERRORS = RegX.checkValidity($frm, true);
-
-	//There were errors...
-	if(ERRORS.length > 0){
-		RegX.isError = true;
-		RegX.onFailure(e, ERRORS);
+	//If submit button had formnovalidate set
+	if(!isFormnovalidate){
+		//For IE
+		if(typeof $frm === 'undefined'){ $frm = e.srcElement; }
+	
+		//If form has the attribute novalidate, stop validation.
+		if(typeof attr($frm, 'novalidate') == 'string'){ novalidate = true; }
+		if(!novalidate){
+			//Reset Boolean Error Tracker
+			RegX.isError = false;
+			
+			//Pass form to checkValidity to check all fields.
+			ERRORS = RegX.checkValidity($frm, true);
+		
+			//There were errors...
+			if(ERRORS.length > 0){
+				RegX.isError = true;
+				RegX.onFailure(e, ERRORS);
+			}
+			RegX.onSuccess(e);
+		}
 	}
-
-	RegX.onSuccess(e);
+	
+	//Reset var
+	isFormnovalidate = false;
+}
+//Click Handler for Submits
+function onClickRegX(e){
+	isFormnovalidate = true;
 }
 //Add event listeners
-function addEvent(frm){   
-  if (frm.addEventListener) {   
-    frm.addEventListener('submit', onSubmitRegX, false);    
-    return true;    
-  } else if (frm.attachEvent) {   
-    return frm.attachEvent('onsubmit', onSubmitRegX);    
-  } else {   
-    frm['onsubmit'] = onSubmitRegX;
-  }   
+function addEvent(obj, type, fn){
+  if (obj.attachEvent){
+    obj['e'+type+fn] = fn;
+    obj[type+fn] = function(){obj['e'+type+fn]( window.event );}
+    obj.attachEvent( 'on'+type, obj[type+fn] );
+  } else
+    obj.addEventListener(type, fn, false);
 }
-//Loop through and bind to each form
-function bindForms(){
-	var $forms = document.forms,
-			i;
-	for(i = $forms.length; i > 0; i--){ addEvent($forms[i-1]); }
+//Remove event handlers
+function removeEvent(obj, type, fn){
+  if ( obj.detachEvent){
+    obj.detachEvent('on'+type, obj[type+fn]);
+    obj[type+fn] = null;
+  } else
+    obj.removeEventListener(type, fn, false);
 }
-bindForms();
+//Protects any previously specified onload events 
+function wOL(f1, f2){
+    return function(){
+        if(f1)
+			f1();
+        if(f2)
+			f2();
+    }
+}
+window.onload = wOL(window.onload, RegX.init);
 })(RegX);
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // big.js Library //////////////////////////////////////////////////////////////////////////////////////////////////////////////
