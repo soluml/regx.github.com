@@ -7,7 +7,7 @@
 * Released under the Creative Commons Attribution-ShareAlike (CC BY-SA) License.
 *
 * author:  Benjamin Solum
-* version: 0.4
+* version: 0.5
 * url:     http://www.soluml.com/RegX/
 * source:  https://regx.github.com/
 * @module RegX
@@ -385,18 +385,13 @@ RegX.checkValidity = function($elem, returnError) {
 				}
 				return true;
 				break;
-				
-				
-				
-				
-				
-				
-			/*
 			case 'datetime':
-				if(!readonly && (required || val.length > 0)){ return !this.validateDateTime($elem); }
+				if(!readonly && (required || val.length > 0)){
+					try{ checkDatetime($elem); }
+					catch(e){ return formatError(e); }
+				}
 				return true;
 				break;
-			*/
 			case 'checkbox':
 			case 'radio':
 			case 'file':
@@ -1225,11 +1220,153 @@ function gregorianDateTimeLocal(val){
 	return [year,month,day,hour,minute,second,fraction];
 }
 
+/**
+* This function checks if the field's value is a valid datetime (including timezones), optionally within a range.
+* The datetime string must contain 4 digits for the year, followed by a dash, followed by two month digits, ranging from 01 to 12, followed by a dash, followed by two day digits, ranging from 01 and 31, followed by a space or the letter 'T', followed by 2 digits for the hour ranging from 00 to 23, followed by a colon, followed by 2 minute digits, ranging from 00 to 59, optionally followed by a colon and two seconds digits, ranging from 00 to 59, optionally followed by a period and from one to three digits representing fractional seconds, followed by a UTC timezone, which can be expressed by the letter 'Z' or a +/- symbol followed by 2 digits for an hour offset followed by 2 digits for a minute offset.
+* __The datetime input supports both a min and a max datetime. These strings must be valid datetime strings.__
+* The datetime input also supports a step attribute, which is an integer describing how many seconds one should step.
+*
+* @method checkDatetime
+* @private
+*/
 
 
+function checkDatetime($input){//YYYY-MM-DD HH:MM(:SS{:F{F{F}}})Z|[+-]HH:MM or YYYY-MM-DD"T"HH:MM(:SS{:F{F{F}}})Z|[+-]HH:MM
+	if($input.selector !== undefined) $input = $input[0];
+	
+	var val          = $input.value,
+	    max          = attr($input, 'max'),
+	    min          = attr($input, 'min'),
+		step         = attr($input, 'step'),
+		defaultstep  = 60, //Default step is 60 seconds
+		basestep     = attr($input, 'value'),
+		regex        = /^(\d{4})\-(\d{2})\-(\d{2})( |T)(\d{2}):(\d{2})(:(\d{2})(\.(\d{1,3}))?)?(Z|(([+\-])(\d{2}):(\d{2})))$/,
+		tDate;
+					
+	if(USE_SANITATION) {
+		val = trim(val);
+		if(max) max = trim(max);
+		if(min) min = trim(min);
+		if(step) step = trim(step);
+		if(basestep) basestep = trim(basestep);
+	}
+	
+	if(!regex.test(val)){ throw {type: 'typeMismatch', msg: 'This is not a valid datetime string. e.g. "YYYY-MM-DD HH:MM:SS.FFF\'Z\'" or "YYYY-MM-DD\'T\'HH:MM:SS.FFF[+/-]HH:MM"'}; }
+	
+	val = gregorianDateTime(val.match(regex));
 
+	if(val && val.length === 10) {
+		tDate = new Date(val[0],(val[1]-1),val[2],val[3],val[4],val[5],val[6]).getTime() + timezoneToMilli(val[7],val[8],val[9]);
+	
+		//Check Max Time
+		if(regex.test(max)) {
+			max = gregorianDateTime(max.match(regex));
+			if((max && max.length === 10) && (new Date(max[0],(max[1]-1),max[2],max[3],max[4],max[5],max[6]).getTime() + timezoneToMilli(max[7],max[8],max[9]) < tDate)){
+				throw {type: 'rangeOverflow', msg: 'This date is past the maximum datetime ('+pad(4, max[0])+'-'+pad(2, max[1])+'-'+pad(2, max[2])+' '+pad(2, max[3])+':'+pad(2, max[4])+':'+pad(2, max[5])+'.'+pad(3, max[6], true)+max[9]+pad(2, max[7])+':'+pad(2, max[8])+').'};
+			}
+		}
 
+		//Check Min Date
+		if(regex.test(min)) {
+			min = gregorianDateTime(min.match(regex));
+			if((min && min.length === 10) && (new Date(min[0],(min[1]-1),min[2],min[3],min[4],min[5],min[6]).getTime() + timezoneToMilli(min[7],min[8],min[9]) > tDate)){
+				throw {type: 'rangeUnderflow', msg: 'This time is sooner than the minimum datetime ('+pad(4, min[0])+'-'+pad(2, min[1])+'-'+pad(2, min[2])+' '+pad(2, min[3])+':'+pad(2, min[4])+':'+pad(2, min[5])+'.'+pad(3, min[6], true)+min[9]+pad(2, min[7])+':'+pad(2, min[8])+').'};
+			}
+			basestep = min;
+		} else{
+			//If no min, do basestep
+			//Base step in this case should be the value attr if it was set, otherwise zero it out.
+			basestep = (regex.test(basestep) ? gregorianDateTime(basestep.match(regex)) : [1970,0,1,0,0,0,0,0,0,'+']);
+			if(basestep === false){ basestep = [1970,0,1,0,0,0,0,0,0,'+']; }
+		}
+		
+		//Check Step
+		if(step !== 'any'){
+			if(!/^\d+$/.test(step)){ step = defaultstep; }
+			else { step = parseInt(step, 10); }
+			
+			//Basestep is the value unless the min is present.
+			if(spanDateTime(basestep, val) % step !== 0){
+				throw {type: 'stepMismatch', msg: 'This time is not a valid step ('+step+' seconds) of the base datetime ('+pad(4, basestep[0])+'-'+pad(2, basestep[1])+'-'+pad(2, basestep[2])+' '+pad(2, basestep[3])+':'+pad(2, basestep[4])+':'+pad(2, basestep[5])+'.'+pad(3, basestep[6], true)+basestep[9]+pad(2, basestep[7])+':'+pad(2, basestep[8])+').'};
+			}
+			
+		}
+		
+		return;	
+	}
 
+	throw {type: 'typeMismatch', msg: 'This is not a valid datetime string. e.g. "YYYY-MM-DD HH:MM:SS.FFF\'Z\'" or "YYYY-MM-DD\'T\'HH:MM:SS.FFF[+/-]HH:MM"'};
+	
+	function timezoneToMilli(h,m,s){
+		//3600000 milliseconds in hour
+		//60000 milliseconds in a minute
+		return (h * 3600000) + parseInt(s+(m*60000),10);
+	}
+	function spanDateTime(base, val){
+		//Determine amount of time in between span of times
+		//1000 = milliseconds in a second.
+		return (new Date(base[0],(base[1]-1),base[2],base[3],base[4],base[5],base[6]).getTime() + timezoneToMilli(base[7],base[8],base[9]) - new Date(val[0],(val[1]-1),val[2],val[3],val[4],val[5],val[6]).getTime() + timezoneToMilli(val[7],val[8],val[9])) / 1000;
+	}
+}
+function gregorianDateTime(val){
+	var year,
+		month,
+		day,
+		hour,
+		minute,
+		second,
+		fraction,
+		tsign,
+		thour,
+		tminute,
+		valt = gregorianDateTimeLocal(val);
+	
+	//Check to see if datetime-local string is valid.
+	if(!valt) { return false; }
+	year = valt[0];
+	month = valt[1];
+	day = valt[2];
+	hour = valt[3];
+	minute = valt[4];
+	second = valt[5];
+	fraction = valt[6];
+	
+	//If Z, timezone is UTC +00:00
+	if(val[11] == 'Z'){
+		tsign = '+';
+		thour = 0;
+		tminute = 0;
+	} else {
+		tsign = val[13];
+		thour = parseInt(val[13]+val[14],10);
+		tminute = parseInt(pad(2, val[15]),10);
+
+		//If better validation, check to see if the timezone is real.
+		if(USE_BETTER_VALIDATION){
+			//Range of offsets of actual time zones is -12:00 to +14:00
+			//Possible Values of UTC Time Offsets:  -12, -11, -10, -9:30, -9, -8, -7, -6, -5, -4:30, -4, -3:30, -3, -2, -1, 0 or 'Z', +1, +2, +3, +3:30, +4, +4:30, +5, +5:30, +5:45, +6, +6:30, +7, +8, +8:45, +9, +9:30, +10, +10:30, +11, +11:30, +12, +12:45, +13, +14
+			
+			switch(tminute){
+				case 0:
+					if(thour < -12 || thour > 14){ return false; }
+					break;
+				case 30:
+					if(Math.abs(thour) !== 4 && Math.abs(thour) !== 3 && Math.abs(thour) !== 9 && thour !== 5 && thour !== 6 && thour !== 10 && thour !== 11){
+						return false;
+					}
+					break;
+				case 45:
+					if(thour !== 5 && thour !== 8 && thour !== 12){ return false; }
+					break;
+				default:
+					return false;
+					break;
+			}
+		}
+	}
+	
+	return [year,month,day,hour,minute,second,fraction,thour,tminute,tsign];	
+}
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // RegX Private Parts //////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////	
@@ -1339,8 +1476,9 @@ function addEvent(obj, type, fn){
     obj['e'+type+fn] = fn;
     obj[type+fn] = function(){obj['e'+type+fn]( window.event );}
     obj.attachEvent( 'on'+type, obj[type+fn] );
-  } else
+  } else {
     obj.addEventListener(type, fn, false);
+  }
 }
 //Remove event handlers
 function removeEvent(obj, type, fn){
@@ -1350,16 +1488,15 @@ function removeEvent(obj, type, fn){
 		obj.detachEvent('on'+type, obj[type+fn]);
 	}
     obj[type+fn] = null;
-  } else
+  } else {
     obj.removeEventListener(type, fn, false);
+  }
 }
 //Protects any previously specified onload events 
 function wOL(f1, f2){
     return function(){
-        if(f1)
-			f1();
-        if(f2)
-			f2();
+        if(f1){ f1(); }
+        if(f2){ f2(); }
     }
 }
 window.onload = wOL(window.onload, RegX.init);
